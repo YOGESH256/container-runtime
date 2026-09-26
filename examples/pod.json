@@ -1,0 +1,10 @@
+{
+  "name": "web",
+  "image": "nginx:alpine",
+  "resources": { "memory": "64m", "cpus": 0.5 },
+  "probe": {
+    "http": { "port": 80, "path": "/" },
+    "periodSeconds": 2,
+    "failureThreshold": 3
+  }
+}
