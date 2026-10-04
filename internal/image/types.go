@@ -140,16 +140,24 @@ func SelectPlatform(idx *Index, os, arch, variant string) (Descriptor, error) {
 	return best, nil
 }
 
-// LayerCompression says how to decode a layer blob. zstd layers exist but
-// Go's standard library cannot decode them, so they are rejected clearly.
-func LayerCompression(mediaType string) (gzip bool, err error) {
+// Compression is how a layer blob is encoded.
+type Compression int
+
+const (
+	Uncompressed Compression = iota
+	Gzip
+	Zstd
+)
+
+// LayerCompression says how to decode a layer blob.
+func LayerCompression(mediaType string) (Compression, error) {
 	switch mediaType {
 	case MediaTypeOCILayerGzip, MediaTypeDockerLayerGzip:
-		return true, nil
-	case MediaTypeOCILayer:
-		return false, nil
+		return Gzip, nil
 	case MediaTypeOCILayerZstd:
-		return false, fmt.Errorf("zstd-compressed layers are not supported")
+		return Zstd, nil
+	case MediaTypeOCILayer:
+		return Uncompressed, nil
 	}
-	return false, fmt.Errorf("unsupported layer media type %q", mediaType)
+	return 0, fmt.Errorf("unsupported layer media type %q", mediaType)
 }

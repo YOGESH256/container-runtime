@@ -25,18 +25,19 @@ import (
 
 // Spec is everything needed to create one container.
 type Spec struct {
-	ID         string         `json:"id"`
-	Image      string         `json:"image"`     // shown to users, e.g. "alpine:3.20"
-	Lowerdirs  []string       `json:"lowerdirs"` // read-only layers, top layer first
-	Args       []string       `json:"args"`
-	Env        []string       `json:"env"`
-	Cwd        string         `json:"cwd,omitempty"`
-	User       string         `json:"user,omitempty"`
-	Hostname   string         `json:"hostname"`
-	Init       bool           `json:"init,omitempty"`
-	Limits     cgroups.Limits `json:"limits"`
-	StopSignal syscall.Signal `json:"stopSignal,omitempty"`
-	Network    string         `json:"network"` // "bridge" (default) or "none"
+	ID         string                `json:"id"`
+	Image      string                `json:"image"`     // shown to users, e.g. "alpine:3.20"
+	Lowerdirs  []string              `json:"lowerdirs"` // read-only layers, top layer first
+	Args       []string              `json:"args"`
+	Env        []string              `json:"env"`
+	Cwd        string                `json:"cwd,omitempty"`
+	User       string                `json:"user,omitempty"`
+	Hostname   string                `json:"hostname"`
+	Init       bool                  `json:"init,omitempty"`
+	Limits     cgroups.Limits        `json:"limits"`
+	StopSignal syscall.Signal        `json:"stopSignal,omitempty"`
+	Network    string                `json:"network"` // "bridge" (default) or "none"
+	Ports      []network.PortMapping `json:"ports,omitempty"`
 }
 
 // Stdio is the container's standard input, output and error.
@@ -130,6 +131,17 @@ func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error)
 		if ip, err = netw.Allocate(spec.ID); err != nil {
 			return -1, err
 		}
+		if len(spec.Ports) > 0 {
+			if err := checkPortConflicts(spec); err != nil {
+				netw.Release(spec.ID)
+				return -1, err
+			}
+			if err := netw.PublishPorts(spec.ID, ip, spec.Ports); err != nil {
+				netw.Release(spec.ID)
+				return -1, err
+			}
+			defer netw.UnpublishPorts(spec.ID)
+		}
 		debug.Logf("engine", "leased %s", ip)
 		// No explicit veth deletion: the kernel removes the pair when the
 		// container's network namespace dies, without making us wait.
@@ -194,4 +206,29 @@ func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error)
 			units.FormatBytes(spec.Limits.MemoryBytes))
 	}
 	return code, nil
+}
+
+// checkPortConflicts refuses a host port another running container holds.
+func checkPortConflicts(spec *Spec) error {
+	all, err := List()
+	if err != nil {
+		return err
+	}
+	for _, st := range all {
+		if st.ID == spec.ID || st.Status != StatusRunning {
+			continue
+		}
+		other, err := LoadSpec(st.ID)
+		if err != nil {
+			continue
+		}
+		for _, a := range spec.Ports {
+			for _, b := range other.Ports {
+				if a.Conflicts(b) {
+					return fmt.Errorf("host port %d/%s is already published by container %s", a.HostPort, a.Proto, st.ID)
+				}
+			}
+		}
+	}
+	return nil
 }

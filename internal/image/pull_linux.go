@@ -20,6 +20,7 @@ import (
 	"github.com/YOGESH256/container-runtime/internal/fsync"
 	"github.com/YOGESH256/container-runtime/internal/registry"
 
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sys/unix"
 )
 
@@ -195,7 +196,7 @@ func (s *Store) fetchLayers(ctx context.Context, c *registry.Client, ref Referen
 //
 // The directory is renamed into place only if both hashes match.
 func (s *Store) fetchLayer(ctx context.Context, c *registry.Client, ref Reference, d Descriptor, diffID string) error {
-	gz, err := LayerCompression(d.MediaType)
+	compression, err := LayerCompression(d.MediaType)
 	if err != nil {
 		return err
 	}
@@ -213,10 +214,18 @@ func (s *Store) fetchLayer(ctx context.Context, c *registry.Client, ref Referenc
 
 	compressed := newHashingReader(io.LimitReader(body, d.Size+1))
 	var tarStream io.Reader = compressed
-	if gz {
+	switch compression {
+	case Gzip:
 		zr, err := gzip.NewReader(compressed)
 		if err != nil {
 			return fmt.Errorf("gunzip: %w", err)
+		}
+		defer zr.Close()
+		tarStream = zr
+	case Zstd:
+		zr, err := zstd.NewReader(compressed)
+		if err != nil {
+			return fmt.Errorf("zstd: %w", err)
 		}
 		defer zr.Close()
 		tarStream = zr

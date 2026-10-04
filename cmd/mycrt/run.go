@@ -19,6 +19,7 @@ import (
 	"github.com/YOGESH256/container-runtime/internal/container"
 	"github.com/YOGESH256/container-runtime/internal/engine"
 	"github.com/YOGESH256/container-runtime/internal/image"
+	"github.com/YOGESH256/container-runtime/internal/network"
 	"github.com/YOGESH256/container-runtime/internal/paths"
 	"github.com/YOGESH256/container-runtime/internal/registry"
 	"github.com/YOGESH256/container-runtime/internal/units"
@@ -50,6 +51,8 @@ func cmdRun(args []string) int {
 	autoRemove := fs.Bool("rm", false, "remove the container when it exits (always on without -d)")
 	var labels multiFlag
 	fs.Var(&labels, "label", "attach a KEY=VALUE label (repeatable)")
+	var ports multiFlag
+	fs.Var(&ports, "p", "publish a port: [HOSTIP:]HOSTPORT:CONTAINERPORT[/udp] (repeatable)")
 	var env multiFlag
 	fs.Var(&env, "e", "set an environment variable KEY=VALUE (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -68,11 +71,23 @@ func cmdRun(args []string) int {
 	if *netMode != "bridge" && *netMode != "none" {
 		return fail(2, "--net must be bridge or none")
 	}
+	var portMaps []network.PortMapping
+	for _, p := range ports {
+		m, err := network.ParsePortMapping(p)
+		if err != nil {
+			return fail(2, "%v", err)
+		}
+		portMaps = append(portMaps, m)
+	}
+	if len(portMaps) > 0 && *netMode == "none" {
+		return fail(2, "-p needs --net bridge")
+	}
 	spec := &engine.Spec{
 		ID:      newID(),
 		Init:    *useInit,
 		Limits:  cgroups.Limits{CPUs: *cpus, Pids: *pids},
 		Network: *netMode,
+		Ports:   portMaps,
 	}
 	if *memory != "" {
 		n, err := units.ParseBytes(*memory)

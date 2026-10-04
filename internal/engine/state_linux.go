@@ -207,6 +207,7 @@ func Remove(id string, force bool) error {
 	if n, err := network.Default(); err == nil {
 		n.Detach(id)
 		n.Release(id)
+		n.UnpublishPorts(id)
 	}
 	return os.RemoveAll(paths.Container(id))
 }

@@ -59,6 +59,19 @@ check "another container fetches it too" bash -c "'$MYCRT' run alpine:3.20 wget 
 kill -TERM "$pn"
 wait "$pn"
 
+section "Published ports"
+hostip=$(ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1)
+web=$("$MYCRT" run -d -p 8080:80 nginx)
+wait_for /dev/null x 1; sleep 1
+check "ps shows the mapping" grep -q '8080:80/tcp' <<<"$("$MYCRT" ps)"
+check "reachable on localhost" bash -c "curl -s --max-time 3 http://127.0.0.1:8080/ | grep -q 'Welcome to nginx'"
+check "reachable on the host's own address ($hostip)" bash -c "curl -s --max-time 3 http://$hostip:8080/ | grep -q 'Welcome to nginx'"
+check "another container reaches it through the host (hairpin NAT)" bash -c "'$MYCRT' run alpine:3.20 wget -qO- -T 3 http://$hostip:8080/ | grep -q 'Welcome to nginx'"
+check "a second container cannot take the same host port" not "$MYCRT" run -d -p 8080:80 nginx
+"$MYCRT" rm -f "$web" >/dev/null
+check "port is closed after removal" not curl -s --max-time 2 http://127.0.0.1:8080/
+check "its nftables table is gone" not nft list table ip "mycrt_$web"
+
 section "Cleanup"
 sleep 0.5
 check "no veth pairs left on the host" test -z "$(ip -o link show type veth)"

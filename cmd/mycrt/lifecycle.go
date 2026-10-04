@@ -99,9 +99,15 @@ func cmdPs(args []string) int {
 		return 0
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "CONTAINER ID\tNAME\tIMAGE\tSTATUS\tIP")
+	fmt.Fprintln(w, "CONTAINER ID\tNAME\tIMAGE\tSTATUS\tIP\tPORTS")
 	for _, st := range shown {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", st.ID, st.Name, st.Image, describe(st), st.IP)
+		var ports []string
+		if spec, err := engine.LoadSpec(st.ID); err == nil {
+			for _, p := range spec.Ports {
+				ports = append(ports, p.String())
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.Name, st.Image, describe(st), st.IP, strings.Join(ports, ","))
 	}
 	w.Flush()
 	return 0

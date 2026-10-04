@@ -18,6 +18,7 @@ import (
 
 	"github.com/YOGESH256/container-runtime/internal/registry"
 
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sys/unix"
 )
 
@@ -200,6 +201,31 @@ func TestPullRejectsCorruptLayer(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(s.path("tmp")); len(left) != 0 {
 		t.Errorf("temporary files left behind: %v", left)
+	}
+}
+
+func TestPullZstdLayer(t *testing.T) {
+	requireRoot(t)
+	raw, _ := layer(t, entry{name: "hello", typ: tar.TypeReg, body: "zstd"})
+	// layer() gzips; re-encode the tar with zstd instead.
+	gz, _ := gzip.NewReader(bytes.NewReader(raw))
+	tarBytes, _ := io.ReadAll(gz)
+	var zbuf bytes.Buffer
+	zw, _ := zstd.NewWriter(&zbuf)
+	zw.Write(tarBytes)
+	zw.Close()
+	f := newFakeImage(t, [][]byte{zbuf.Bytes()}, []string{sha256Digest(tarBytes)})
+	var m Manifest
+	json.Unmarshal(f.manifest, &m)
+	m.Layers[0].MediaType = MediaTypeOCILayerZstd
+	f.manifest, _ = json.Marshal(m)
+	s, _ := NewStore(t.TempDir())
+	img, err := f.pull(t, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(img.LayerDirs[0], "hello")); string(b) != "zstd" {
+		t.Fatalf("hello = %q", b)
 	}
 }
 

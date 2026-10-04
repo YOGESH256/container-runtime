@@ -355,3 +355,62 @@ func resolvConf() string {
 	}
 	return "nameserver 1.1.1.1\nnameserver 8.8.8.8\n"
 }
+
+// PublishPorts makes the container's ports reachable on the host, in a
+// table of its own so adding and removing it never touches other
+// containers' rules:
+//
+//	prerouting   traffic arriving from outside: dnat to the container
+//	output       traffic from the host itself, including localhost
+//	postrouting  hairpin: a container reaching a published port of another
+//	             container through the host gets its replies via the host,
+//	             and localhost-sourced packets are given a routable source
+func (n *Network) PublishPorts(id string, ip net.IP, ports []PortMapping) error {
+	if len(ports) == 0 {
+		return nil
+	}
+	// Packets from 127.0.0.1 may leave through the bridge once DNAT
+	// rewrote their destination; the kernel drops them as "martian"
+	// unless this is set.
+	if err := os.WriteFile("/proc/sys/net/ipv4/conf/"+n.Bridge+"/route_localnet", []byte("1"), 0); err != nil {
+		return fmt.Errorf("route_localnet: %w", err)
+	}
+	var pre, out, post strings.Builder
+	for _, p := range ports {
+		match := fmt.Sprintf("%s dport %d", p.Proto, p.HostPort)
+		if p.HostIP != "" {
+			match = "ip daddr " + p.HostIP + " " + match
+		}
+		fmt.Fprintf(&pre, "\t\t%s dnat to %s:%d\n", match, ip, p.ContainerPort)
+		fmt.Fprintf(&out, "\t\tfib daddr type local %s dnat to %s:%d\n", match, ip, p.ContainerPort)
+		fmt.Fprintf(&post, "\t\tip saddr %s ip daddr %s %s dport %d masquerade\n", n.Subnet, ip, p.Proto, p.ContainerPort)
+	}
+	rules := fmt.Sprintf(`add table ip %[1]s
+delete table ip %[1]s
+table ip %[1]s {
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+%[2]s	}
+	chain output {
+		type nat hook output priority dstnat; policy accept;
+%[3]s	}
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip saddr 127.0.0.0/8 oifname "%[4]s" masquerade
+%[5]s	}
+}
+`, portsTable(id), pre.String(), out.String(), n.Bridge, post.String())
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(rules)
+	if outb, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nft: %v: %s", err, strings.TrimSpace(string(outb)))
+	}
+	return nil
+}
+
+// UnpublishPorts removes the container's port table, if any.
+func (n *Network) UnpublishPorts(id string) {
+	exec.Command("nft", "delete", "table", "ip", portsTable(id)).Run()
+}
+
+func portsTable(id string) string { return "mycrt_" + id }
