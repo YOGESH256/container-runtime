@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 // fakeCluster stands in for the node agents. Run and Stop change its

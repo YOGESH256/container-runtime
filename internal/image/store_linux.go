@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"container-runtime/internal/fsync"
+	"github.com/YOGESH256/container-runtime/internal/fsync"
 
 	"golang.org/x/sys/unix"
 )

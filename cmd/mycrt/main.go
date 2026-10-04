@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"container-runtime/internal/container"
+	"github.com/YOGESH256/container-runtime/internal/container"
 )
 
 const usageText = `usage: mycrt <command> [flags]

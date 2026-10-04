@@ -13,7 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 const usage = `usage: myctl [--server URL] <command>

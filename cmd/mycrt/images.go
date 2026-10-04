@@ -13,9 +13,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"container-runtime/internal/image"
-	"container-runtime/internal/paths"
-	"container-runtime/internal/registry"
+	"github.com/YOGESH256/container-runtime/internal/image"
+	"github.com/YOGESH256/container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/registry"
 )
 
 func cmdPull(args []string) int {

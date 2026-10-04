@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"time"
 
-	"container-runtime/internal/image"
-	"container-runtime/internal/units"
+	"github.com/YOGESH256/container-runtime/internal/image"
+	"github.com/YOGESH256/container-runtime/internal/units"
 )
 
 // PodSpec is what a user asks for: one container, kept running somewhere.
@@ -61,10 +61,17 @@ type TCPProbe struct {
 
 var podNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
+// DefaultMemory caps a pod that gives no memory limit, so one forgotten
+// field cannot let a pod eat a whole node.
+const DefaultMemory = "256m"
+
 // Normalize fills in defaults and validates the spec.
 func (p *PodSpec) Normalize() error {
 	if !podNameRe.MatchString(p.Name) {
 		return fmt.Errorf("pod name %q: use 1-40 lowercase letters, digits and '-'", p.Name)
+	}
+	if p.Resources.Memory == "" {
+		p.Resources.Memory = DefaultMemory
 	}
 	if _, err := image.ParseReference(p.Image); err != nil {
 		return fmt.Errorf("pod %s: %v", p.Name, err)

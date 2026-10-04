@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
-	"container-runtime/internal/cgroups"
-	"container-runtime/internal/container"
-	"container-runtime/internal/debug"
-	"container-runtime/internal/network"
-	"container-runtime/internal/paths"
-	"container-runtime/internal/units"
+	"github.com/YOGESH256/container-runtime/internal/cgroups"
+	"github.com/YOGESH256/container-runtime/internal/container"
+	"github.com/YOGESH256/container-runtime/internal/debug"
+	"github.com/YOGESH256/container-runtime/internal/network"
+	"github.com/YOGESH256/container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/units"
 )
 
 // Spec is everything needed to create one container.

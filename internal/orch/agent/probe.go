@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 // prober checks one container on a timer. The agent runs probes, not the

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"container-runtime/internal/fsutil"
+	"github.com/YOGESH256/container-runtime/internal/fsutil"
 
 	"golang.org/x/sys/unix"
 )

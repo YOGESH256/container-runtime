@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"container-runtime/internal/cgroups"
-	"container-runtime/internal/fsync"
-	"container-runtime/internal/network"
-	"container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/cgroups"
+	"github.com/YOGESH256/container-runtime/internal/fsync"
+	"github.com/YOGESH256/container-runtime/internal/network"
+	"github.com/YOGESH256/container-runtime/internal/paths"
 
 	"golang.org/x/sys/unix"
 )

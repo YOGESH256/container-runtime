@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 // fakeRuntime keeps containers in memory.

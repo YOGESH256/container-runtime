@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"container-runtime/internal/debug"
+	"github.com/YOGESH256/container-runtime/internal/debug"
 
 	"golang.org/x/sys/unix"
 )

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 // Labels mycrt stores on pod containers.
@@ -68,7 +68,9 @@ func (m Mycrt) List(ctx context.Context) ([]Container, error) {
 // as a label, so it survives an agent restart along with the container.
 func (m Mycrt) Run(ctx context.Context, req orch.RunRequest) error {
 	s := req.Spec
-	args := []string{"run", "-d",
+	// --init: PID 1 in a long-running pod must reap orphans and relay
+	// signals, and most server programs were not written to be PID 1.
+	args := []string{"run", "-d", "--init",
 		"--name", orch.ContainerName(req.Pod, req.Generation),
 		"--hostname", req.Pod,
 		"--label", labelPod + "=" + req.Pod,

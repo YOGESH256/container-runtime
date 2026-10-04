@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"container-runtime/internal/orch/controlplane"
+	"github.com/YOGESH256/container-runtime/internal/orch/controlplane"
 )
 
 func main() {

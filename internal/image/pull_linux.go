@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"container-runtime/internal/fsync"
-	"container-runtime/internal/registry"
+	"github.com/YOGESH256/container-runtime/internal/fsync"
+	"github.com/YOGESH256/container-runtime/internal/registry"
 
 	"golang.org/x/sys/unix"
 )

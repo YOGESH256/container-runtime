@@ -28,8 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"container-runtime/internal/fsync"
-	"container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/fsync"
+	"github.com/YOGESH256/container-runtime/internal/paths"
 
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"

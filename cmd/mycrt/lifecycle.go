@@ -15,8 +15,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"container-runtime/internal/engine"
-	"container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/engine"
+	"github.com/YOGESH256/container-runtime/internal/paths"
 )
 
 // shimEnv marks a re-executed mycrt that supervises one detached container.

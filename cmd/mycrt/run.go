@@ -15,13 +15,13 @@ import (
 	"strings"
 	"syscall"
 
-	"container-runtime/internal/cgroups"
-	"container-runtime/internal/container"
-	"container-runtime/internal/engine"
-	"container-runtime/internal/image"
-	"container-runtime/internal/paths"
-	"container-runtime/internal/registry"
-	"container-runtime/internal/units"
+	"github.com/YOGESH256/container-runtime/internal/cgroups"
+	"github.com/YOGESH256/container-runtime/internal/container"
+	"github.com/YOGESH256/container-runtime/internal/engine"
+	"github.com/YOGESH256/container-runtime/internal/image"
+	"github.com/YOGESH256/container-runtime/internal/paths"
+	"github.com/YOGESH256/container-runtime/internal/registry"
+	"github.com/YOGESH256/container-runtime/internal/units"
 
 	"golang.org/x/sys/unix"
 )

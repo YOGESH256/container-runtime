@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"container-runtime/internal/orch"
+	"github.com/YOGESH256/container-runtime/internal/orch"
 )
 
 // Handler serves the control plane's HTTP API:

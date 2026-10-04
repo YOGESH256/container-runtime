@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"container-runtime/internal/orch/agent"
+	"github.com/YOGESH256/container-runtime/internal/orch/agent"
 )
 
 func main() {

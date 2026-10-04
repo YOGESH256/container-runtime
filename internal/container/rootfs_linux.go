@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"container-runtime/internal/fsutil"
+	"github.com/YOGESH256/container-runtime/internal/fsutil"
 
 	"golang.org/x/sys/unix"
 )

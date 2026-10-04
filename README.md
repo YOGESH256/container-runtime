@@ -19,6 +19,7 @@ Code is edited on the Mac and cross-compiled for the Lima VMs, where it runs
 as root. `make install` builds and copies the binaries into `crt1`.
 
 ```sh
+git clone https://github.com/YOGESH256/container-runtime
 make install
 limactl shell crt1
 
@@ -44,6 +45,15 @@ scripts/cluster.sh down
 
 Set `MYCRT_DEBUG=1` to see where container start-up time goes. Set
 `MYCRT_REGISTRY_MIRROR=mirror.gcr.io` to spare Docker Hub's rate limit.
+
+## Diagrams
+
+Three interactive diagrams live in `docs/`. GitHub shows them as source, so
+download a file and open it in a browser, or clone the repo.
+
+- `docs/overall.html`: the whole system, from `myctl` down to a running container.
+- `docs/network-blocks.html`: the bridge, veth pairs, NAT, IP leases and DNS.
+- `docs/network-journey.html`: one `curl` from a container out to the internet.
 
 ## Tests
 
