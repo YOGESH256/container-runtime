@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"github.com/YOGESH256/container-runtime/internal/debug"
@@ -35,6 +36,15 @@ func InitMain() {
 	}
 	debug.Enabled = cfg.Debug
 	debug.Logf("init", "got config")
+	if debug.Enabled {
+		if b, err := os.ReadFile("/proc/self/status"); err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(line, "Cap") || strings.HasPrefix(line, "Uid") || strings.HasPrefix(line, "NoNewPrivs") || strings.HasPrefix(line, "Seccomp:") {
+					debug.Logf("init", "%s", line)
+				}
+			}
+		}
+	}
 	if err := setupContainer(cfg); err != nil {
 		initFail(125, "%v", err)
 	}
@@ -85,7 +95,13 @@ func setupContainer(cfg *Config) error {
 	if err := setLinkUp("lo"); err != nil {
 		return fmt.Errorf("bring up lo: %w", err)
 	}
-	return pivotRoot(cfg.Rootfs)
+	if err := pivotRoot(cfg.Rootfs); err != nil {
+		return err
+	}
+	if cfg.Terminal {
+		return attachPTY()
+	}
+	return nil
 }
 
 func setLinkUp(name string) error {

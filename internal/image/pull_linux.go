@@ -231,7 +231,7 @@ func (s *Store) fetchLayer(ctx context.Context, c *registry.Client, ref Referenc
 		tarStream = zr
 	}
 	uncompressed := newHashingReader(tarStream)
-	if err := Unpack(uncompressed, tmp); err != nil {
+	if err := Unpack(uncompressed, tmp, s.IDShift); err != nil {
 		return err
 	}
 	// The tar reader stops at the end-of-archive marker. Read the padding
@@ -258,13 +258,16 @@ func (s *Store) fetchLayer(ctx context.Context, c *registry.Client, ref Referenc
 	if err := syncfs(tmp); err != nil {
 		return err
 	}
+	if err := os.Chown(tmp, s.IDShift, s.IDShift); err != nil {
+		return err
+	}
 	if err := os.Rename(tmp, s.LayerDir(diffID)); err != nil {
 		if _, statErr := os.Stat(s.LayerDir(diffID)); statErr == nil {
 			return nil // another pull unpacked the same layer first
 		}
 		return err
 	}
-	return fsync.Dir(s.path("layers"))
+	return fsync.Dir(s.layersDir())
 }
 
 func syncfs(dir string) error {

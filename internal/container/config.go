@@ -45,6 +45,11 @@ type Config struct {
 	// cgroup2 read-only at /sys/fs/cgroup, so it sees its own limits there.
 	CgroupNS bool `json:"cgroupns,omitempty"`
 
+	// Terminal gives the container a pseudo-terminal of its own, created
+	// inside its /dev/pts. The init process sends the master end back to
+	// the parent, which relays it to the user's terminal.
+	Terminal bool `json:"terminal,omitempty"`
+
 	// Debug turns on timing output in the init process, which does not
 	// inherit the parent's environment.
 	Debug bool `json:"debug,omitempty"`

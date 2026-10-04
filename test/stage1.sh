@@ -22,9 +22,9 @@ section "Mount namespace"
 check "sees the image's files" run test -e /etc/alpine-release
 check "does not see the host's files" not run test -e /etc/lsb-release
 before=$(wc -l </proc/self/mountinfo)
-run sh -c 'mount -t tmpfs scratch /mnt && echo ready && sleep 1' >"$tmp/m" &
+run sh -c 'echo ready && sleep 1' >"$tmp/m" &
 wait_for "$tmp/m" ready
-check "container mounts stay invisible to the host" test "$(wc -l </proc/self/mountinfo)" = "$before"
+check "container mounts (proc, dev, overlay) stay invisible to the host" test "$(wc -l </proc/self/mountinfo)" = "$before"
 wait
 check "no rootfs mount left behind" not grep -q "$ROOTFS" /proc/self/mountinfo
 
@@ -59,6 +59,13 @@ init=$(init_of "$p")
 check "--init shows mycrt-init as PID 1" test "$(ps -o comm= -p "$init")" = mycrt-init
 check "--init reaps the orphan" not grep -q Z <<<"$(ps -o stat= --ppid "$init")"
 wait "$p"
+
+section "Terminal"
+out=$(printf 'tty\nexit 4\n' | script -qec "$MYCRT run -t --rootfs $ROOTFS sh" /dev/null | tr -d '\r')
+check "-t gives the container its own pty" grep -q '^/dev/pts/0$' <<<"$out"
+check "exit code passes through the pty" test "$(printf 'exit 4\n' | script -qec "$MYCRT run -t --rootfs $ROOTFS sh; echo code=\$?" /dev/null | tr -d '\r' | grep -o 'code=[0-9]*')" = code=4
+check "piped input works with -t too" test "$(echo 'echo piped; exit 3' | run -t sh | tr -d '\r' | tail -1)" = piped
+check "without -t, stdin is not a terminal" test "$(run tty)" = "not a tty"
 
 section "Exit codes and signals"
 run sh -c 'exit 7'

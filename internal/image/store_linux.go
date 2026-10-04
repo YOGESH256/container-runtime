@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,13 @@ var ErrNotFound = errors.New("image not found locally")
 // different images are downloaded and unpacked once.
 type Store struct {
 	Root string
+
+	// IDShift is added to every file owner and group when a layer is
+	// unpacked. Containers run in a user namespace whose root is host
+	// user IDShift, so files must be owned by shifted IDs to look right
+	// inside. Layers unpacked with a different shift live in separate
+	// directories, so changing it only costs a re-pull.
+	IDShift int
 }
 
 // RefRecord is what a name resolved to when it was pulled.
@@ -47,15 +55,28 @@ type Image struct {
 	CompressedSize int64
 }
 
-// NewStore creates the store's directories if needed.
-func NewStore(root string) (*Store, error) {
-	s := &Store{Root: root}
-	for _, d := range []string{s.path("blobs", "sha256"), s.path("layers"), s.path("tmp")} {
+// NewStore creates the store's directories if needed. The directories
+// leading to layers are traversable (0711) because the container's
+// unprivileged user must reach its lower layers, without being able to
+// list other content.
+func NewStore(root string, idShift int) (*Store, error) {
+	s := &Store{Root: root, IDShift: idShift}
+	for _, d := range []string{s.path("blobs", "sha256"), s.path("tmp")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
 		}
 	}
+	for _, d := range []string{root, s.path("layers"), s.layersDir()} {
+		if err := os.MkdirAll(d, 0o711); err != nil {
+			return nil, err
+		}
+		os.Chmod(d, 0o711)
+	}
 	return s, nil
+}
+
+func (s *Store) layersDir() string {
+	return s.path("layers", strconv.Itoa(s.IDShift))
 }
 
 func (s *Store) path(elem ...string) string {
@@ -68,7 +89,7 @@ func (s *Store) blobPath(digest string) string {
 
 // LayerDir is where the layer with this uncompressed digest is unpacked.
 func (s *Store) LayerDir(diffID string) string {
-	return s.path("layers", strings.TrimPrefix(diffID, "sha256:"))
+	return filepath.Join(s.layersDir(), strings.TrimPrefix(diffID, "sha256:"))
 }
 
 // readBlob returns a stored blob after re-checking its digest.

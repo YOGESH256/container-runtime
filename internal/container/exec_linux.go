@@ -32,15 +32,8 @@ func execCommand(cfg *Config) (int, error) {
 	if err != nil {
 		return 127, err
 	}
-	// Go's syscall versions change credentials on every thread at once.
-	if err := syscall.Setgroups(u.groups); err != nil {
-		return 125, fmt.Errorf("setgroups: %w", err)
-	}
-	if err := syscall.Setgid(u.gid); err != nil {
-		return 125, fmt.Errorf("setgid: %w", err)
-	}
-	if err := syscall.Setuid(u.uid); err != nil {
-		return 125, fmt.Errorf("setuid: %w", err)
+	if err := switchUser(u); err != nil {
+		return 125, err
 	}
 	unix.Umask(0o022)
 	err = unix.Exec(path, cfg.Args, env)
@@ -177,4 +170,25 @@ func readColonFile(path string) [][]string {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+// switchUser becomes u with the container's reduced privileges: the
+// bounding set shrinks first (while CAP_SETPCAP is still held), then
+// no_new_privs, then the identity change, then the capability set and the
+// seccomp filter. Root inside keeps only keepCaps; anyone else keeps none.
+func switchUser(u *execUser) error {
+	if err := hardenPre(); err != nil {
+		return err
+	}
+	// Go's syscall versions change credentials on every thread at once.
+	if err := syscall.Setgroups(u.groups); err != nil {
+		return fmt.Errorf("setgroups: %w", err)
+	}
+	if err := syscall.Setgid(u.gid); err != nil {
+		return fmt.Errorf("setgid: %w", err)
+	}
+	if err := syscall.Setuid(u.uid); err != nil {
+		return fmt.Errorf("setuid: %w", err)
+	}
+	return hardenPost(u.uid == 0)
 }

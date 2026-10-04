@@ -6,7 +6,9 @@ containerd, runc or libcontainer underneath. The only libraries are
 `golang.org/x/sys`, `vishvananda/netlink` and `bbolt`, as the brief asks.
 
 - `mycrt` runs OCI images: namespaces, cgroups v2, overlayfs, image pulls
-  from any registry, and bridge networking with NAT.
+  from any registry, bridge networking with NAT and published ports. Every
+  container is confined by a user namespace, dropped capabilities, a seccomp
+  filter, a device allow-list and masked kernel files.
 - `mycontrol` is the control plane: pods in bbolt, a scheduler, and a
   reconcile loop that replaces failed containers and dead nodes.
 - `myagent` runs on every node: it starts containers with mycrt, probes
@@ -23,11 +25,12 @@ git clone https://github.com/YOGESH256/container-runtime
 make install
 limactl shell crt1
 
-sudo mycrt run alpine:3.20 sh                         # isolated, networked shell
+sudo mycrt run -t alpine:3.20 sh                      # isolated, networked shell on its own terminal
 sudo mycrt run --memory 64m --cpus 0.5 --pids 100 alpine:3.20 sh
-sudo mycrt run -d --name web nginx                    # background container
-sudo mycrt ps                                         # note its IP, e.g. 10.88.0.2
-curl http://10.88.0.2/
+sudo mycrt run -d --name web -p 8080:80 nginx         # background container, port published
+curl http://localhost:8080/
+sudo mycrt exec web sh                                # a shell inside the running container
+sudo mycrt ps                                         # shows its IP and ports
 sudo mycrt stop web && sudo mycrt rm web
 ```
 
@@ -61,12 +64,13 @@ Each stage has a script that checks the brief's "done when" line, plus more.
 
 | Stage | Run | Checks |
 |---|---|---|
-| 1. Isolation | `make test-stage1` | 28 |
+| 1. Isolation | `make test-stage1` | 32 |
 | 2. cgroups v2 | `make test-stage2` | 19 |
-| 3. overlayfs | `make test-stage3` | 13 |
+| 3. overlayfs | `make test-stage3` | 14 |
 | 4. OCI images | `make test-stage4` | 24 |
-| 5. Networking | `make test-stage5` | 21 |
+| 5. Networking | `make test-stage5` | 28 |
 | 6. Orchestrator | `bash test/stage6.sh` (on the Mac) | 23 |
+| 7. Hardening | `make test-stage7` | 39 |
 
 `make unit` runs the Go tests that need no root, on the Mac. They cover image
 references, the registry client against a fake registry, IP allocation, the
@@ -156,6 +160,43 @@ nftables masquerades traffic leaving the subnet. DNS comes from
 systemd-resolved's upstream list, because `127.0.0.53` is unreachable from
 inside a container.
 
+`-p 8080:80` publishes a port. The container gets an nftables table of its
+own with DNAT rules in the prerouting hook (traffic from outside), the
+output hook (the host itself, including localhost) and a hairpin masquerade
+so another container can reach the published port through the host.
+Removing the container removes the table.
+
+### Stage 7: hardening (`internal/container/hardening_linux.go`)
+
+Stages 1 to 6 hide the host from the container. Stage 7 takes away the
+power to do anything about it. Root inside a container is, to the host:
+
+| Lock | Effect |
+|---|---|
+| User namespace | Container uid 0 is host uid 100000. An escape lands as an unprivileged user. Image layers are unpacked with owners shifted by 100000 so they look root-owned inside. |
+| Capabilities | Docker's default set minus `CAP_MKNOD`, enforced through the bounding set, so no exec can regain them. `no_new_privs` makes setuid binaries inert. |
+| seccomp | A BPF filter refuses about fifty system calls: mounts, namespaces, modules, reboot, clock, swap, ptrace, BPF, perf, io_uring, keyring. `clone3` returns `ENOSYS` so `clone` can be inspected for namespace flags. A foreign ABI kills the process. |
+| Device filter | An eBPF program on the container's cgroup allows only null, zero, full, random, urandom, tty, console, ptmx and pts. It applies to host root too. |
+| Masked paths | `/proc/kcore`, `/proc/keys`, `/sys/firmware` and others are covered; `/proc/sys`, `/proc/sysrq-trigger`, `/sys` and the cgroup files are read-only. |
+| Devices | `/dev` holds six bind-mounted nodes and nothing else. `mknod` is refused by the user namespace. |
+
+The stage 7 test is a list of escape attempts that must fail: mount,
+unshare, mknod of a disk, reading the kernel log, reboot, writing sysrq,
+opening `/dev/vda` from a host-root process placed in the cgroup. nginx,
+ping and apk keep working.
+
+What this is not: a boundary for hostile code. The container still shares
+the host kernel, and one kernel bug reachable through an allowed system
+call is enough to escape. That needs a second, independent boundary, such
+as gVisor or a microVM. Hardened containers are the right tool for code
+you trust.
+
+`mycrt exec` joins a running container's namespaces and applies the same
+locks. One limit: a multithreaded Go process cannot join a user namespace,
+so the exec'd process runs as the shifted host user instead. Inside, `id`
+prints 100000 rather than 0, but file access and every restriction are the
+same.
+
 ### Stage 6: the orchestrator (`internal/orch`)
 
 The orchestrator is one reconcile loop: observe actual state, diff it against
@@ -209,32 +250,34 @@ about. Each fix is in the code with a comment.
 5. **SIGTERM during setup killed mycrt before cleanup.** The fix is to
    subscribe to signals before creating anything, then relay any queued
    signal once the container runs.
+6. **nginx could not open `/dev/stderr` once containers ran as user
+   100000.** Reopening a stream through `/proc/self/fd` checks the file's
+   owner, and the log file and terminal belong to host root. Streams the
+   container could not reopen are now relayed through pipes owned by its
+   user, and the detached log is chowned to it.
+7. **The eBPF device filter denied everything.** The kernel packs the
+   access bits in the upper half of `access_type` and the device kind in
+   the lower; the first version read them the other way round.
 
 ## Not implemented
 
-Some of these are out of scope per the brief, and some are known gaps.
-
-- **No user namespaces.** Root in a container is root on the host, so this
-  is not a security boundary. The brief lists user namespaces as a stretch
-  goal. There is also no seccomp, capability dropping or AppArmor.
-- **No pseudo-terminal allocation.** Containers share the caller's
-  terminal. Shells and job control work, but `tty` inside prints
-  "not a tty".
-- **No zstd layers.** Go's standard library cannot decode zstd. Such images
-  fail with a clear error.
-- **No `exec` into a running container.**
+- **No AppArmor or SELinux profile.** The locks above are all kernel
+  features mycrt sets up itself; a mandatory access control profile would
+  be one more.
+- **`exec` runs outside the user namespace** (see stage 7).
 - **One control plane, no auth or TLS, node-local container IPs, and no
   service discovery**, per the brief.
 
 ## Layout
 
 ```
-cmd/mycrt         runtime CLI: run, ps, stop, rm, logs, inspect, pull, images
+cmd/mycrt         runtime CLI: run, exec, ps, stop, rm, logs, inspect, pull, images
 cmd/mycontrol     control plane server
 cmd/myagent       node agent
 cmd/myctl         cluster CLI
-internal/container  namespaces, re-exec'd init, mounts, pivot_root, mini init
-internal/cgroups    cgroup v2 groups and limits
+internal/container  namespaces, re-exec'd init, mounts, pivot_root, mini init,
+                    capabilities, seccomp, pty, exec
+internal/cgroups    cgroup v2 groups, limits and the eBPF device filter
 internal/image      references, manifests, content store, verified pulls, unpacking
 internal/registry   OCI distribution client with bearer-token auth
 internal/network    bridge, veth, NAT, IP leases, /etc files

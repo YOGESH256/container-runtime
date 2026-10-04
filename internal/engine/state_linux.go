@@ -72,10 +72,10 @@ func Create(spec *Spec, name string, labels map[string]string, autoRemove bool) 
 		}
 	}
 	dir := paths.Container(spec.ID)
-	if err := os.MkdirAll(paths.Containers(), 0o700); err != nil {
+	if err := paths.Ensure(); err != nil {
 		return nil, err
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	if err := os.Mkdir(dir, 0o711); err != nil {
 		return nil, err
 	}
 	if err := writeJSON(filepath.Join(dir, "spec.json"), spec); err != nil {

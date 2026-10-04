@@ -69,6 +69,9 @@ check "reachable on the host's own address ($hostip)" bash -c "curl -s --max-tim
 check "another container reaches it through the host (hairpin NAT)" bash -c "'$MYCRT' run alpine:3.20 wget -qO- -T 3 http://$hostip:8080/ | grep -q 'Welcome to nginx'"
 check "a second container cannot take the same host port" not "$MYCRT" run -d -p 8080:80 nginx
 "$MYCRT" rm -f "$web" >/dev/null
+# A detached start that fails keeps its record, like docker, so its error
+# can be inspected; remove it here.
+"$MYCRT" rm $("$MYCRT" ps -a -q) >/dev/null 2>&1
 check "port is closed after removal" not curl -s --max-time 2 http://127.0.0.1:8080/
 check "its nftables table is gone" not nft list table ip "mycrt_$web"
 

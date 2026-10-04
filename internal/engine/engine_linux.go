@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -22,6 +23,19 @@ import (
 	"github.com/YOGESH256/container-runtime/internal/paths"
 	"github.com/YOGESH256/container-runtime/internal/units"
 )
+
+// IDShift is the host user ID that root in a container maps to; the
+// container owns the IDShift..IDShift+65535 range. MYCRT_UID_SHIFT
+// overrides it. Images are unpacked with this shift, so changing it means
+// re-pulling.
+func IDShift() int {
+	if v := os.Getenv("MYCRT_UID_SHIFT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 100000
+}
 
 // Spec is everything needed to create one container.
 type Spec struct {
@@ -43,6 +57,9 @@ type Spec struct {
 // Stdio is the container's standard input, output and error.
 type Stdio struct {
 	In, Out, Err *os.File
+	// Terminal gives the container its own pseudo-terminal, relayed to In
+	// and Out.
+	Terminal bool
 }
 
 // Run starts a container registered with Create and supervises it until
@@ -81,10 +98,20 @@ func Run(id string, stdio Stdio, sigs chan os.Signal) (int, error) {
 }
 
 func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error) {
+	shift := IDShift()
 	dir := paths.Container(spec.ID)
+	// The container's root (host user shift) mounts the overlay itself,
+	// so it needs to own the upper, work and mount directories and to
+	// traverse the ones above them.
+	if err := os.Chmod(dir, 0o711); err != nil {
+		return -1, err
+	}
 	upper, work, merged := filepath.Join(dir, "upper"), filepath.Join(dir, "work"), filepath.Join(dir, "rootfs")
 	for _, d := range []string{upper, work, merged} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
+			return -1, err
+		}
+		if err := os.Chown(d, shift, shift); err != nil {
 			return -1, err
 		}
 	}
@@ -95,6 +122,7 @@ func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error)
 		if err := os.MkdirAll(empty, 0o755); err != nil {
 			return -1, err
 		}
+		os.Chown(empty, shift, shift)
 		lowerdirs = []string{empty}
 	}
 
@@ -115,6 +143,9 @@ func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error)
 		return -1, fmt.Errorf("open cgroup: %w", err)
 	}
 	defer cgDir.Close()
+	if err := cgroups.AttachDeviceFilter(cgDir); err != nil {
+		return -1, err
+	}
 
 	// Networking: lease an address now, wire the veth pair once the
 	// container's network namespace exists (the Setup hook below).
@@ -176,6 +207,8 @@ func run(spec *Spec, st *State, stdio Stdio, sigs <-chan os.Signal) (int, error)
 		Stdout:   stdio.Out,
 		Stderr:   stdio.Err,
 		CgroupFD: int(cgDir.Fd()),
+		IDShift:  shift,
+		Terminal: stdio.Terminal,
 		Setup: func(pid int) error {
 			if netw == nil {
 				return nil

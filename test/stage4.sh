@@ -29,7 +29,7 @@ grep -E "pulled|layer" "$tmp/nginx" | sed 's/^/        /'
 init=$(init_of "$p")
 check "entrypoint script configured nginx" grep -q "Configuration complete" "$tmp/nginx"
 check "nginx serves its welcome page" bash -c "nsenter -t $init -n curl -s http://127.0.0.1/ | grep -q 'Welcome to nginx'"
-check "workers dropped to the image's nginx user (uid 101)" grep -qx ' *101' <<<"$(ps -o uid= --ppid "$init" | head -1)"
+check "workers dropped to the image's nginx user (uid 101, host 100101)" grep -qx ' *100101' <<<"$(ps -o uid= --ppid "$init" | head -1)"
 kill -TERM "$p"
 wait "$p"
 code=$?

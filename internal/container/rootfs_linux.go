@@ -36,13 +36,17 @@ func setupRootfs(cfg *Config) error {
 	if len(cfg.Lowerdirs) > 0 {
 		opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s",
 			strings.Join(cfg.Lowerdirs, ":"), cfg.Upperdir, cfg.Workdir)
-		// When an overlay mount goes away, the kernel syncs its upper
-		// filesystem, which here is the host's whole root disk. That made
-		// every container exit take hundreds of milliseconds. "volatile"
-		// skips those syncs. The price is that the upper layer can't be
-		// reused after a host crash, and mycrt never reuses one anyway.
+		// userxattr: mounted from inside a user namespace, overlayfs keeps
+		// its bookkeeping in user.overlay.* attributes, since trusted.*
+		// ones need real root. volatile: when an overlay mount goes away,
+		// the kernel syncs its upper filesystem, which here is the host's
+		// whole root disk. That made every container exit take hundreds of
+		// milliseconds. volatile skips those syncs. The price is that the
+		// upper layer can't be reused after a host crash, and mycrt never
+		// reuses one anyway.
+		opts += ",userxattr"
 		err := unix.Mount("overlay", cfg.Rootfs, "overlay", 0, opts+",volatile")
-		if errors.Is(err, unix.EINVAL) { // kernels before 5.10
+		if errors.Is(err, unix.EINVAL) { // kernels before 5.11
 			err = unix.Mount("overlay", cfg.Rootfs, "overlay", 0, opts)
 		}
 		if err != nil {
@@ -89,6 +93,71 @@ func setupRootfs(cfg *Config) error {
 			return err
 		}
 	}
+	return maskPaths(root)
+}
+
+// Paths under /proc and /sys that expose or steer the host kernel. They
+// are covered with /dev/null or an empty read-only tmpfs, so they exist
+// but say nothing. The list matches Docker's.
+var maskedPaths = []string{
+	"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys",
+	"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
+	"/proc/timer_stats", "/sys/firmware", "/sys/devices/virtual/powercap",
+}
+
+// readonlyPaths change kernel settings when written to.
+var readonlyPaths = []string{
+	"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger",
+}
+
+func maskPaths(root int) error {
+	for _, p := range maskedPaths {
+		fd, err := fsutil.OpenInRoot(root, p, unix.O_PATH)
+		if errors.Is(err, unix.ENOENT) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("mask %s: %w", p, err)
+		}
+		var st unix.Stat_t
+		unix.Fstat(fd, &st)
+		if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+			err = unix.Mount("tmpfs", fsutil.ProcPath(fd), "tmpfs", unix.MS_RDONLY|nosuidNoexecNodev, "size=4k,mode=755")
+		} else {
+			err = unix.Mount("/dev/null", fsutil.ProcPath(fd), "", unix.MS_BIND, "")
+		}
+		unix.Close(fd)
+		if err != nil {
+			return fmt.Errorf("mask %s: %w", p, err)
+		}
+	}
+	for _, p := range readonlyPaths {
+		fd, err := fsutil.OpenInRoot(root, p, unix.O_PATH)
+		if errors.Is(err, unix.ENOENT) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read-only %s: %w", p, err)
+		}
+		target := fsutil.ProcPath(fd)
+		err = unix.Mount(target, target, "", unix.MS_BIND, "")
+		unix.Close(fd)
+		if err != nil {
+			return fmt.Errorf("read-only %s: %w", p, err)
+		}
+		// The old handle still points under the new bind mount; look the
+		// path up again to land on top of it.
+		if fd, err = fsutil.OpenInRoot(root, p, unix.O_PATH); err != nil {
+			return fmt.Errorf("read-only %s: %w", p, err)
+		}
+		// A remount inside a user namespace may only add restrictions, so
+		// repeat the flags the parent mount already has.
+		err = unix.Mount("", fsutil.ProcPath(fd), "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|nosuidNoexecNodev, "")
+		unix.Close(fd)
+		if err != nil {
+			return fmt.Errorf("read-only %s: %w", p, err)
+		}
+	}
 	return nil
 }
 
@@ -117,28 +186,26 @@ func bindFileInRoot(root int, target, source string) error {
 }
 
 // populateDev fills the fresh /dev tmpfs with the handful of device nodes
-// and symlinks programs expect. The container never sees the host's /dev.
+// and symlinks programs expect. The nodes are bind mounts of the host's,
+// because a user namespace may not create device nodes, and that is a
+// feature: the container can only ever reach the devices listed here.
 func populateDev(root int) error {
+	for _, name := range []string{"null", "zero", "full", "random", "urandom", "tty"} {
+		fd, err := fsutil.CreateFileInRoot(root, "/dev/"+name, 0o666)
+		if err != nil {
+			return fmt.Errorf("/dev/%s: %w", name, err)
+		}
+		err = unix.Mount("/dev/"+name, fsutil.ProcPath(fd), "", unix.MS_BIND, "")
+		unix.Close(fd)
+		if err != nil {
+			return fmt.Errorf("bind /dev/%s: %w", name, err)
+		}
+	}
 	dev, err := fsutil.OpenInRoot(root, "/dev", unix.O_PATH|unix.O_DIRECTORY)
 	if err != nil {
 		return fmt.Errorf("open /dev: %w", err)
 	}
 	defer unix.Close(dev)
-
-	old := unix.Umask(0)
-	defer unix.Umask(old)
-	nodes := []struct {
-		name         string
-		major, minor uint32
-	}{
-		{"null", 1, 3}, {"zero", 1, 5}, {"full", 1, 7},
-		{"random", 1, 8}, {"urandom", 1, 9}, {"tty", 5, 0},
-	}
-	for _, n := range nodes {
-		if err := unix.Mknodat(dev, n.name, unix.S_IFCHR|0o666, int(unix.Mkdev(n.major, n.minor))); err != nil {
-			return fmt.Errorf("mknod /dev/%s: %w", n.name, err)
-		}
-	}
 	links := []struct{ target, name string }{
 		{"/proc/self/fd", "fd"},
 		{"/proc/self/fd/0", "stdin"},

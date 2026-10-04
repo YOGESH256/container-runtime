@@ -128,7 +128,7 @@ func TestPullUnpacksAndConvertsWhiteouts(t *testing.T) {
 		entry{name: "var/new", typ: tar.TypeReg, body: "new"},
 	)
 	f := newFakeImage(t, [][]byte{base, top}, []string{baseID, topID})
-	s, err := NewStore(t.TempDir())
+	s, err := NewStore(t.TempDir(), 100000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +149,9 @@ func TestPullUnpacksAndConvertsWhiteouts(t *testing.T) {
 	if st.Mode&0o7777 != 0o4755 || st.Nlink != 2 {
 		t.Errorf("bin/tool mode %o nlink %d, want 4755 and a hard link", st.Mode&0o7777, st.Nlink)
 	}
+	if st.Uid != 100000 || st.Gid != 100000 {
+		t.Errorf("bin/tool owner %d:%d, want 100000:100000 (shifted)", st.Uid, st.Gid)
+	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Errorf("a symlink let a tar entry escape the layer: %v", entries)
 	}
@@ -163,13 +166,13 @@ func TestPullUnpacksAndConvertsWhiteouts(t *testing.T) {
 	if st.Mode&unix.S_IFMT != unix.S_IFCHR || st.Rdev != 0 {
 		t.Errorf("whiteout for etc/hello is mode %o rdev %d, want a 0:0 char device", st.Mode, st.Rdev)
 	}
-	if v, err := unix.Getxattr(filepath.Join(up, "var"), "trusted.overlay.opaque", make([]byte, 8)); err != nil || v != 1 {
+	if v, err := unix.Getxattr(filepath.Join(up, "var"), "user.overlay.opaque", make([]byte, 8)); err != nil || v != 1 {
 		t.Errorf("var is not marked opaque: %v", err)
 	}
 
 	// Ask the kernel: stack the layers and look at the merged view.
 	merged, upper, work := t.TempDir(), t.TempDir(), t.TempDir()
-	opts := "lowerdir=" + up + ":" + low + ",upperdir=" + upper + ",workdir=" + work
+	opts := "lowerdir=" + up + ":" + low + ",upperdir=" + upper + ",workdir=" + work + ",userxattr"
 	if err := unix.Mount("overlay", merged, "overlay", 0, opts); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +194,7 @@ func TestPullRejectsCorruptLayer(t *testing.T) {
 	bad := bytes.Clone(l)
 	bad[len(bad)-5] ^= 0xff
 	f.blobs[d] = bad
-	s, _ := NewStore(t.TempDir())
+	s, _ := NewStore(t.TempDir(), 100000)
 	_, err := f.pull(t, s)
 	if err == nil || !(strings.Contains(err.Error(), "digest mismatch") || strings.Contains(err.Error(), "gzip") || strings.Contains(err.Error(), "checksum")) {
 		t.Fatalf("err = %v, want a verification failure", err)
@@ -219,7 +222,7 @@ func TestPullZstdLayer(t *testing.T) {
 	json.Unmarshal(f.manifest, &m)
 	m.Layers[0].MediaType = MediaTypeOCILayerZstd
 	f.manifest, _ = json.Marshal(m)
-	s, _ := NewStore(t.TempDir())
+	s, _ := NewStore(t.TempDir(), 100000)
 	img, err := f.pull(t, s)
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +237,7 @@ func TestPullRejectsWrongDiffID(t *testing.T) {
 	l, _ := layer(t, entry{name: "f", typ: tar.TypeReg, body: "content"})
 	wrong := "sha256:" + strings.Repeat("ab", 32)
 	f := newFakeImage(t, [][]byte{l}, []string{wrong})
-	s, _ := NewStore(t.TempDir())
+	s, _ := NewStore(t.TempDir(), 100000)
 	if _, err := f.pull(t, s); err == nil || !strings.Contains(err.Error(), "diff ID mismatch") {
 		t.Fatalf("err = %v, want diff ID mismatch", err)
 	}

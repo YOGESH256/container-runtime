@@ -38,6 +38,18 @@ func runMiniInit(cfg *Config) int {
 	for i, g := range u.groups {
 		groups[i] = uint32(g)
 	}
+	// The init stays root inside the container, with the kept
+	// capabilities and the seccomp filter. The command is forked from
+	// this thread and inherits both; its own setuid below drops the
+	// capabilities entirely for a non-root user.
+	if err := hardenPre(); err != nil {
+		fmt.Fprintf(os.Stderr, "mycrt: %v\n", err)
+		return 125
+	}
+	if err := hardenPost(true); err != nil {
+		fmt.Fprintf(os.Stderr, "mycrt: %v\n", err)
+		return 125
+	}
 	tty := isTerminal(os.Stdin)
 	unix.Umask(0o022)
 	child, err := syscall.ForkExec(path, cfg.Args, &syscall.ProcAttr{

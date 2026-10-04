@@ -20,8 +20,16 @@ import (
 // container's init instead of parsing the command line.
 const initEnv = "_MYCRT_INIT"
 
-// configFD is where the child finds the pipe carrying its Config.
-const configFD = 3
+// configFD is where the child finds the pipe carrying its Config, and
+// ptyFD the socket it sends its terminal's master end back on.
+const (
+	configFD = 3
+	ptyFD    = 4
+)
+
+// IDMapSize is how many user and group IDs a container gets. Root inside
+// is IDShift outside, and so on up to IDShift+IDMapSize-1.
+const IDMapSize = 65536
 
 // namespaces is the set of fresh namespaces every container gets.
 const namespaces = unix.CLONE_NEWPID | unix.CLONE_NEWNS | unix.CLONE_NEWUTS |
@@ -36,6 +44,15 @@ type Process struct {
 	// created directly inside it (clone3 with CLONE_INTO_CGROUP), so it
 	// never runs for a moment without its limits.
 	CgroupFD int
+
+	// IDShift is the host user and group ID that root in the container
+	// maps to. The container gets a user namespace of its own, so root
+	// inside is an ordinary unprivileged user on the host.
+	IDShift int
+
+	// Terminal attaches the container to a pseudo-terminal of its own and
+	// relays it to Stdin/Stdout, which should be the user's terminal.
+	Terminal bool
 
 	// Setup runs once the child's namespaces exist but before its init
 	// continues. It receives the child's PID as seen from the host.
@@ -65,20 +82,54 @@ func Run(p *Process) (int, error) {
 	}
 	defer cfgW.Close()
 
+	// With a terminal, the child's stdio is the pty it creates itself;
+	// it sends the master end over this socket pair.
+	var ptyParent, ptyChild *os.File
+	if p.Terminal {
+		fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		if err != nil {
+			return -1, err
+		}
+		ptyParent, ptyChild = os.NewFile(uintptr(fds[0]), "pty-parent"), os.NewFile(uintptr(fds[1]), "pty-child")
+		defer ptyParent.Close()
+		defer ptyChild.Close()
+	}
+	p.Config.Terminal = p.Terminal
+	stdio, err := prepareStdio(p.Stdin, p.Stdout, p.Stderr, p.IDShift, p.Terminal)
+	if err != nil {
+		return -1, err
+	}
+	defer stdio.finish()
+
 	cmd := &exec.Cmd{
 		Path:       "/proc/self/exe",
 		Args:       []string{"mycrt-init"},
 		Env:        []string{initEnv + "=1"},
-		Stdin:      p.Stdin,
-		Stdout:     p.Stdout,
-		Stderr:     p.Stderr,
-		ExtraFiles: []*os.File{cfgR}, // becomes fd 3 in the child
+		Stdin:      stdio.in,
+		Stdout:     stdio.out,
+		Stderr:     stdio.err,
+		ExtraFiles: []*os.File{cfgR, ptyChild}, // fds 3 and 4 in the child
 		SysProcAttr: &syscall.SysProcAttr{
-			Cloneflags: namespaces,
+			Cloneflags:  namespaces | unix.CLONE_NEWUSER,
+			UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: p.IDShift, Size: IDMapSize}},
+			GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: p.IDShift, Size: IDMapSize}},
+			// The parent is real root, so the child may keep calling
+			// setgroups within its mapped range.
+			GidMappingsEnableSetgroups: true,
+			// Host root is not in the map, so the child starts out as
+			// "nobody" there and would lose every capability on exec.
+			// Becoming uid 0 of the new namespace first keeps them.
+			Credential: &syscall.Credential{Uid: 0, Gid: 0, Groups: []uint32{}},
 			// If mycrt dies, take the container down with it rather than
 			// leaving an unsupervised process behind.
 			Pdeathsig: syscall.SIGKILL,
 		},
+	}
+	if p.Terminal {
+		// The child becomes a session leader so the pty can be its
+		// controlling terminal; the parent's own terminal stays with the
+		// parent, which relays keystrokes through the pty.
+		cmd.SysProcAttr.Setsid = true
 	}
 	if p.CgroupFD >= 0 {
 		cmd.SysProcAttr.UseCgroupFD = true
@@ -94,9 +145,11 @@ func Run(p *Process) (int, error) {
 
 	if err := cmd.Start(); err != nil {
 		cfgR.Close()
+		stdio.started()
 		return -1, fmt.Errorf("start container init: %w", err)
 	}
 	cfgR.Close()
+	stdio.started()
 	pid := cmd.Process.Pid
 	debug.Logf("parent", "cloned init, host pid %d", pid)
 
@@ -115,12 +168,26 @@ func Run(p *Process) (int, error) {
 		return abort(fmt.Errorf("send config: %w", err))
 	}
 	cfgW.Close()
+
+	// The child's first act after setup is to send its pty master, or to
+	// exit with an error. Either way this returns promptly.
+	var relay *terminalRelay
+	if p.Terminal {
+		ptyChild.Close()
+		master, err := receiveFD(ptyParent)
+		if err != nil {
+			cmd.Wait()
+			return -1, fmt.Errorf("container terminal: %w", err)
+		}
+		relay = startTerminalRelay(master, p.Stdin, p.Stdout, sigs)
+		defer relay.stop()
+	}
 	if p.Started != nil {
 		p.Started(pid)
 	}
 
 	done := make(chan struct{})
-	go forwardSignals(sigs, done, pid, p.StopSignal, isTerminal(p.Stdin), p.Stderr)
+	go forwardSignals(sigs, done, pid, p.StopSignal, isTerminal(p.Stdin) && !p.Terminal, p.Stderr)
 	err = cmd.Wait()
 	close(done)
 	debug.Logf("parent", "init reaped")

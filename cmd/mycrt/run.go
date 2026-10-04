@@ -47,6 +47,7 @@ func cmdRun(args []string) int {
 	pids := fs.Int64("pids", 1024, "maximum number of processes and threads (0: unlimited)")
 	netMode := fs.String("net", "bridge", "network: bridge (own IP on the mycrt0 bridge, NAT out) or none (loopback only)")
 	detach := fs.Bool("d", false, "run in the background and print the container ID")
+	tty := fs.Bool("t", false, "give the container its own terminal (for interactive shells and editors)")
 	name := fs.String("name", "", "give the container a unique name")
 	autoRemove := fs.Bool("rm", false, "remove the container when it exits (always on without -d)")
 	var labels multiFlag
@@ -185,9 +186,13 @@ func cmdRun(args []string) int {
 		return fail(125, "%v", err)
 	}
 	if *detach {
+		if *tty {
+			engine.Remove(st.ID, true)
+			return fail(2, "-t needs a foreground container; drop -d")
+		}
 		return startDetached(st.ID)
 	}
-	code, err := engine.Run(st.ID, engine.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, sigs)
+	code, err := engine.Run(st.ID, engine.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Terminal: *tty}, sigs)
 	if err != nil {
 		return fail(125, "%v", err)
 	}
@@ -198,7 +203,10 @@ var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // getOrPull returns the local image, pulling it first if needed.
 func getOrPull(ref image.Reference) (*image.Image, error) {
-	store, err := image.NewStore(paths.Images())
+	if err := paths.Ensure(); err != nil {
+		return nil, err
+	}
+	store, err := image.NewStore(paths.Images(), engine.IDShift())
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/YOGESH256/container-runtime/internal/engine"
 	"github.com/YOGESH256/container-runtime/internal/image"
 	"github.com/YOGESH256/container-runtime/internal/paths"
 	"github.com/YOGESH256/container-runtime/internal/registry"
@@ -35,7 +36,10 @@ func cmdPull(args []string) int {
 	if err != nil {
 		return fail(125, "%v", err)
 	}
-	store, err := image.NewStore(paths.Images())
+	if err := paths.Ensure(); err != nil {
+		return fail(125, "%v", err)
+	}
+	store, err := image.NewStore(paths.Images(), engine.IDShift())
 	if err != nil {
 		return fail(125, "%v", err)
 	}
@@ -53,7 +57,7 @@ func cmdImages(args []string) int {
 	if !requireRoot() {
 		return 125
 	}
-	store, err := image.NewStore(paths.Images())
+	store, err := image.NewStore(paths.Images(), engine.IDShift())
 	if err != nil {
 		return fail(125, "%v", err)
 	}

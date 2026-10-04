@@ -64,6 +64,9 @@ func runShim(id string) int {
 		return 125
 	}
 	defer logFile.Close()
+	// The container's root must be able to reopen its own log through
+	// /dev/stderr, which nginx and others do.
+	logFile.Chown(engine.IDShift(), engine.IDShift())
 	devNull, _ := os.Open(os.DevNull)
 	code, err := engine.Run(id, engine.Stdio{In: devNull, Out: logFile, Err: logFile}, nil)
 	if err != nil {
@@ -76,6 +79,7 @@ func cmdPs(args []string) int {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	all := fs.Bool("a", false, "include stopped containers")
 	asJSON := fs.Bool("json", false, "print JSON")
+	quiet := fs.Bool("q", false, "print only container IDs")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -96,6 +100,12 @@ func cmdPs(args []string) int {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(shown)
+		return 0
+	}
+	if *quiet {
+		for _, st := range shown {
+			fmt.Println(st.ID)
+		}
 		return 0
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)

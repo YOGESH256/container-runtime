@@ -37,7 +37,8 @@ echo "        upper layer: $upper"
 check "modified file was copied up" test "$(cat "$upper/etc/motd")" = hi
 check "untouched files were not copied" test ! -e "$upper/bin/busybox"
 check "deleted file is a whiteout, a 0:0 char device" test "$(stat -c '%F %t:%T' "$upper/etc/alpine-release")" = "character special file 0:0"
-check "recreated directory is marked opaque" python3 -c "import os,sys; sys.exit(os.getxattr('$upper/etc/apk', 'trusted.overlay.opaque') != b'y')"
+check "recreated directory is marked opaque" python3 -c "import os,sys; sys.exit(os.getxattr('$upper/etc/apk', 'user.overlay.opaque') != b'y')"
+check "upper layer files belong to the shifted user" test "$(stat -c %u "$upper/etc/motd")" = 100000
 check "overlay mount is invisible to the host" not grep -q overlay /proc/self/mountinfo
 wait "$p"
 

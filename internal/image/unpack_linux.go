@@ -38,7 +38,10 @@ const (
 // Every path is resolved with dir as its root, so entries such as
 // "../../etc/passwd", or entries under a symlink pointing at "/", cannot
 // write outside the layer.
-func Unpack(r io.Reader, dir string) error {
+//
+// Owners are shifted by idShift so they are correct from inside the
+// container's user namespace.
+func Unpack(r io.Reader, dir string, idShift int) error {
 	root, err := unix.Open(dir, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
@@ -63,7 +66,7 @@ func Unpack(r io.Reader, dir string) error {
 		if name == "/" {
 			continue
 		}
-		if err := unpackEntry(root, name, hdr, tr); err != nil {
+		if err := unpackEntry(root, name, hdr, tr, idShift); err != nil {
 			return fmt.Errorf("unpack %s: %w", name, err)
 		}
 		if hdr.Typeflag == tar.TypeDir {
@@ -85,7 +88,7 @@ func Unpack(r io.Reader, dir string) error {
 	return nil
 }
 
-func unpackEntry(root int, name string, hdr *tar.Header, r io.Reader) error {
+func unpackEntry(root int, name string, hdr *tar.Header, r io.Reader, idShift int) error {
 	dir, base := path.Split(name)
 	parent, err := fsutil.MkdirAllInRoot(root, dir, 0o755)
 	if err != nil {
@@ -96,7 +99,13 @@ func unpackEntry(root int, name string, hdr *tar.Header, r io.Reader) error {
 	if strings.HasPrefix(base, whiteoutPrefix) {
 		switch {
 		case base == whiteoutOpaque:
-			return unix.Setxattr(fsutil.ProcPath(parent), "trusted.overlay.opaque", []byte("y"), 0)
+			// user.overlay.* is what overlayfs reads when mounted from a
+			// user namespace (userxattr); trusted.* when mounted by root.
+			if err := unix.Setxattr(fsutil.ProcPath(parent), "user.overlay.opaque", []byte("y"), 0); err != nil {
+				return err
+			}
+			unix.Setxattr(fsutil.ProcPath(parent), "trusted.overlay.opaque", []byte("y"), 0)
+			return nil
 		case strings.HasPrefix(base, whiteoutMeta):
 			return nil // other .wh..wh. names are aufs bookkeeping
 		}
@@ -168,7 +177,7 @@ func unpackEntry(root int, name string, hdr *tar.Header, r io.Reader) error {
 		return nil // PAX global headers and other metadata-only entries
 	}
 
-	if err := unix.Fchownat(parent, base, hdr.Uid, hdr.Gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fchownat(parent, base, hdr.Uid+idShift, hdr.Gid+idShift, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return fmt.Errorf("chown: %w", err)
 	}
 	if hdr.Typeflag != tar.TypeSymlink {
@@ -179,9 +188,9 @@ func unpackEntry(root int, name string, hdr *tar.Header, r io.Reader) error {
 	}
 	for key, value := range hdr.PAXRecords {
 		attr, ok := strings.CutPrefix(key, "SCHILY.xattr.")
-		// trusted.overlay.* attributes steer overlayfs itself, so a layer
-		// must never be able to set them.
-		if !ok || strings.HasPrefix(attr, "trusted.") {
+		// Overlay bookkeeping attributes steer overlayfs itself, so a
+		// layer must never be able to set them.
+		if !ok || strings.HasPrefix(attr, "trusted.") || strings.HasPrefix(attr, "user.overlay.") {
 			continue
 		}
 		err := unix.Lsetxattr(fsutil.ProcPath(parent)+"/"+base, attr, []byte(value), 0)

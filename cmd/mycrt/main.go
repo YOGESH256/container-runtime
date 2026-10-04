@@ -18,6 +18,7 @@ const usageText = `usage: mycrt <command> [flags]
 
 commands:
   run       run a command in a new container (-d to run it in the background)
+  exec      run another command inside a running container
   ps        list containers
   stop      stop running containers
   rm        remove containers
@@ -38,6 +39,9 @@ func main() {
 	if id := os.Getenv(shimEnv); id != "" {
 		os.Exit(runShim(id))
 	}
+	if stage := os.Getenv(execEnv); stage != "" {
+		os.Exit(execStage(stage))
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usageText)
 		os.Exit(2)
@@ -46,6 +50,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		code = cmdRun(os.Args[2:])
+	case "exec":
+		code = cmdExec(os.Args[2:])
 	case "ps":
 		code = cmdPs(os.Args[2:])
 	case "stop":
